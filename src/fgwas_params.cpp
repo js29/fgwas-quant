@@ -16,12 +16,15 @@ Fgwas_params::Fgwas_params(){
 	wannot.clear();
 	dannot.clear();
 	distmodels.clear();
+	quantannot.clear();
+	fixedB1val = 0.0;
 	segannot.clear();
 	outstem = "fgwas";
 	dropchr = false;
 	cc = false;
+	noci = false;
 	finemap = false;
-	ridge_penalty = 0.2;
+	ridge_penalty = 0.0;
 	xv = false;
 	onlyp = false;
 	cond = false;
@@ -64,8 +67,15 @@ void Fgwas_params::print_stdout(){
 	//if (!dropchr) cout << "None\n";
 	//else cout << chrtodrop <<"\n";
 
-	cout << ":: SNP annotations:";
+	cout << ":: SNP binary annotations:";
 	for (vector<string>::iterator it = wannot.begin(); it != wannot.end(); it++) cout << " "<< *it; cout << "\n";
+	cout << ":: SNP quantitative annotations:";
+	for (int i = 0; i < quantannot.size(); i++)	cout << " " << quantannot[i]; cout << "\n";
+	if (fixedB1val > 0) {
+		cout << ":: 2-param quantitative model with fixed B1 value: " << fixedB1val << "\n";
+	} else {
+		cout << ":: 3-param quantitative model\n";
+	}
 	cout << ":: Distance models:";
 	for (int i = 0; i < dannot.size(); i++)	cout << " " << dannot[i]<< ":" << distmodels[i];  cout << "\n";
 	cout << ":: Segment annotation (low quantile, high quantile):";

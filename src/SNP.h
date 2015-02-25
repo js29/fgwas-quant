@@ -24,6 +24,7 @@
 #include <gsl/gsl_vector.h>
 #include <boost/algorithm/string.hpp>
 #include "CmdLine.h"
+#include "QuantParams.h"
 using namespace std;
 
 class SNP{
@@ -47,6 +48,9 @@ public:
 	vector<bool> annot;
 	vector<float> annot_weight;
 	vector<int> dists;
+	vector<double> qannot; // a quantitative annotation
+	vector<bool> qannotDefined; // is this quantitative annot defined? (i.e. not NA)
+	
 	bool condannot;
 	void append_distannots(vector<vector<pair<int, int> > >); // convert distances to annotations according to distance models
 	int nannot;
@@ -54,8 +58,8 @@ public:
 	double calc_logBF_ind(double);
 	double approx_v(); // approximate V using f and N
 	double approx_v_cc(); //approximate V in case control setting
-	double get_x(vector<double>);
-	double get_x_cond(vector<double>, double);
+	double get_x(const vector<double>& lambda, const vector<QuantParams>& qparams);
+	double get_x_cond(const vector<double>& lambda, const vector<QuantParams>& qparams, double lambdac);
 	double sumlog(double, double);
 };
 

@@ -35,8 +35,11 @@ public:
 	bool print, zformat;
 	string infile, outstem;
 	bool cc;
+	bool noci; // if true, do not estimate confidence intervals
 	//annotation lists
 	vector<string> wannot, dannot, distmodels, segannot;
+	vector<string> quantannot;
+	double fixedB1val;
 	double loquant, hiquant;
 
 	//drop chromosomes
