@@ -52,7 +52,7 @@ public:
 	vector<pair<int, int> > read_dmodel(string);
 
 	//10-fold cross-validation
-	vector<double> cross10(bool);
+	vector<double> cross10(bool penalize, ostringstream& outstr, string outfileSNPs, string outfileSegs);
 	vector<set<int> > make_cross10();
 	double llk_xv(set<int>, bool);
 
@@ -61,6 +61,8 @@ public:
 	void load_snps_z(string, vector<double> prior, vector<string> annot, vector<string> qannot, vector<string> dannot, vector<string> segannot);
 	void print();
 	void print(string, string);
+	void print_header(ogzstream& outSNP, ogzstream& outSeg);
+	void print(int segnum, ogzstream& outSNP, ogzstream& outSeg);
 
 	void make_segments(int);
 	void make_segments(string);

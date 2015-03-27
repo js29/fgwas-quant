@@ -780,92 +780,120 @@ void SNPs::print(){
 void SNPs::print(string outfile, string outfile2){
 	ogzstream out(outfile.c_str());
 	ogzstream out2(outfile2.c_str());
-	out << "id chr pos logBF Z V pi pseudologPO pseudoPPA PPA chunk";
-	out2 << "chunk NSNP chr st sp max_abs_Z logBF pi logPO PPA";
-	for (vector<string>::iterator it = annotnames.begin(); it != annotnames.end(); it++) out << " "<< *it;
-	for (vector<string>::iterator it = quantannotnames.begin(); it != quantannotnames.end(); it++) out << " "<< *it;
-	out << "\n";
-	for (vector<string>::iterator it = segannotnames.begin(); it != segannotnames.end(); it++) out2 << " "<< *it;
-	out2 << "\n";
-	int segnum = 0;
-	for (vector<pair<int, int> >::iterator it = segments.begin(); it != segments.end(); it++){
-		int stindex = it->first;
-		int spindex = it->second;
-		out2 << segnum << " " << spindex-stindex << " "<< d[stindex].chr << " "<< d[stindex].pos << " "<< d[spindex-1].pos << " ";
-		double segp = segpriors[segnum];
-		double seglpio = log(segp)- log(1-segp);
-		double seglPO;
-		double logsegbf = -1000;
-		double segPPA;
-		double sum = 0;
-		double maxZ = 0;
-		for (int i = stindex; i < spindex; i++){
-			double logpi = snppri[i];
-			double logbf = d[i].BF;
-			double Z = fabs(d[i].Z);
-			if (Z> maxZ) maxZ = Z;
-			logsegbf= sumlog(logsegbf, logpi+logbf);
-		}
-		seglPO = logsegbf+ seglpio;
-		segPPA = exp(seglPO- sumlog(0, seglPO));
-		//if fine mapping, all priors are 1
-		if (params->finemap){
-			segp = 1;
-			segPPA = 1;
-		}
-		out2 << maxZ<< " "<< logsegbf << " " << segp << " "<< seglPO << " "<< segPPA;
-		for (int i = 0; i < nsegannot; i++) out2 << " "<< segannot[segnum][i];
-		out2 << "\n";
-		for (int i =stindex ; i < spindex; i++){
-			//double pi = snppri[i]*segpi;
-			double logpi = snppri[i]+log(segp);
-			double lognum = snppri[i] +d[i].BF;
-			double lpio = logpi - log(1-exp(logpi));
-			double cPPA = exp(lognum - logsegbf);
-			double lPO = d[i].BF + lpio;
-			double tPPA = cPPA*segPPA;
-			double PPA = exp(lPO)/  ( 1+ exp(lPO));
-			out << d[i].id << " "<< d[i].chr << " "<< d[i].pos << " "<< d[i].BF <<  " "<< d[i].Z <<  " " << d[i].V << " "<< snppri[i] << " "<< lPO  << " "<< PPA << " " << tPPA << " "<< segnum;
-			for (int j = 0; j < annotnames.size(); j++) out << " "<< d[i].annot[j];
-			for (int j = 0; j < quantannotnames.size(); j++) {
-				if (d[i].qannotDefined[j]) {
-					cout << " NA";
-				} else {
-					cout << " " << d[i].qannot[j];
-				}
-			}
-			out << "\n";
-		}
-		segnum++;
+	print_header(out, out2);
+
+	for (int i = 0; i < segments.size(); i++){
+		print(i, out, out2);
 	}
 }
 
-vector<double> SNPs::cross10(bool penalize){
+void SNPs::print_header(ogzstream& outSNP, ogzstream& outSeg){
+	outSNP << "id chr pos logBF Z V pi pseudologPO pseudoPPA PPA chunk";
+	outSeg << "chunk NSNP chr st sp max_abs_Z logBF pi logPO PPA";
+	for (vector<string>::iterator it = annotnames.begin(); it != annotnames.end(); it++) outSNP << " "<< *it;
+	for (vector<string>::iterator it = quantannotnames.begin(); it != quantannotnames.end(); it++) outSNP << " "<< *it;
+	outSNP << "\n";
+	for (vector<string>::iterator it = segannotnames.begin(); it != segannotnames.end(); it++) outSeg << " "<< *it;
+	outSeg << "\n";
+}
+
+void SNPs::print(int segnum, ogzstream& outSNP, ogzstream& outSeg){
+	pair<int, int> seg = segments[segnum];
+	int stindex = seg.first;
+	int spindex = seg.second;
+
+	outSeg << segnum << " " << spindex-stindex << " "<< d[stindex].chr << " "<< d[stindex].pos << " "<< d[spindex-1].pos << " ";
+	double segp = segpriors[segnum];
+	double seglpio = log(segp)- log(1-segp);
+	double seglPO;
+	double logsegbf = -1000;
+	double segPPA;
+	double sum = 0;
+	double maxZ = 0;
+	for (int i = stindex; i < spindex; i++){
+		double logpi = snppri[i];
+		double logbf = d[i].BF;
+		double Z = fabs(d[i].Z);
+		if (Z> maxZ) maxZ = Z;
+		logsegbf= sumlog(logsegbf, logpi+logbf);
+	}
+	seglPO = logsegbf+ seglpio;
+	segPPA = exp(seglPO- sumlog(0, seglPO));
+	//if fine mapping, all priors are 1
+	if (params->finemap){
+		segp = 1;
+		segPPA = 1;
+	}
+	outSeg << maxZ<< " "<< logsegbf << " " << segp << " "<< seglPO << " "<< segPPA;
+	for (int i = 0; i < nsegannot; i++) outSeg << " "<< segannot[segnum][i];
+	outSeg << "\n";
+	for (int i =stindex ; i < spindex; i++){
+		//double pi = snppri[i]*segpi;
+		double logpi = snppri[i]+log(segp);
+		double lognum = snppri[i] +d[i].BF;
+		double lpio = logpi - log(1-exp(logpi));
+		double cPPA = exp(lognum - logsegbf);
+		double lPO = d[i].BF + lpio;
+		double tPPA = cPPA*segPPA;
+		double PPA = exp(lPO)/  ( 1+ exp(lPO));
+		outSNP << d[i].id << " "<< d[i].chr << " "<< d[i].pos << " "<< d[i].BF <<  " "<< d[i].Z <<  " " << d[i].V << " "<< snppri[i] << " "<< lPO  << " "<< PPA << " " << tPPA << " "<< segnum;
+		for (int j = 0; j < annotnames.size(); j++) outSNP << " "<< d[i].annot[j];
+		for (int j = 0; j < quantannotnames.size(); j++) {
+			if (d[i].qannotDefined[j]) {
+				outSNP << " NA";
+			} else {
+				outSNP << " " << d[i].qannot[j];
+			}
+		}
+		outSNP << "\n";
+	}
+}
+
+vector<double> SNPs::cross10(bool penalize, ostringstream& ostr, string outfileSNPs, string outfileSegs){
 	//do 10-fold cross validation
 	//
 	// split segments into groups
 	// L = 1/10* \sum_i L*(i)
 	// where L*(i) is the likelihood of data in group i after optimizing model without it
 	//
+	ogzstream outSNP, outSeg;
+	if (!outfileSNPs.empty() && !outfileSegs.empty()) {
+		outSNP.open(outfileSNPs.c_str(), std::ios::out);
+		outSeg.open(outfileSegs.c_str(), std::ios::out);
+		this->print_header(outSNP, outSeg);
+	}
+	
 	vector< set<int> > split10 = make_cross10();
 	vector<double> Lstar;
-	for (vector<set<int> >::iterator it = split10.begin(); it != split10.end(); it++){
+	int fold = 1;
+	for (vector<set<int> >::iterator it = split10.begin(); it != split10.end(); it++, fold++){
 		GSL_xv_optim(*it, penalize);
 		double tmpllk = 0;
 		for (set<int>::iterator it2 = it->begin(); it2 != it->end(); it2++)
 			tmpllk += llk(*it2);
 		//cout << tmpl << "\n";
 		Lstar.push_back(tmpllk);
+		
+		ostr << "Fold " << fold << ": Segments " << *(it->begin()) << "-" << *(it->rbegin()) << endl;
+		for (int i = 0; i < seglambdas.size(); i++) ostr << segannotnames[i] << " " << seglambdas[i] << endl;
+		for (int i = 0; i < lambdas.size(); i++) ostr << annotnames[i] << " " << lambdas[i] << endl;
+		ostr << "QuantParam lambda b0 b1\n";
+		for (int i = 0; i < quantparams.size(); i++) ostr << quantannotnames[i] << " " << quantparams[i].lambda << " " << quantparams[i].b0 << " " << quantparams[i].b1 << endl;
+		
+		if (!outfileSNPs.empty() && !outfileSegs.empty()) {
+			for (set<int>::iterator it2 = it->begin(); it2 != it->end(); it2++)
+				this->print(*it2, outSNP, outSeg);
+		}
 	}
 	return Lstar;
 }
 
 vector<set<int> > SNPs::make_cross10(){
 	vector<set<int> > toreturn;
-	int nper = floor((double) segments.size() / 10.0);
+	int nper = ceil((double) segments.size() / 10.0);
 	for (int i = 0; i < 10; i++){
 		set<int> tmp;
-		for (int j = i*nper; j < i*nper+nper; j++) tmp.insert(j);
+		for (int j = i*nper; j < i*nper+nper && j < segments.size(); j++) tmp.insert(j);
 		toreturn.push_back(tmp);
 	}
 	//for (vector<set<int> >::iterator it = toreturn.begin(); it != toreturn.end(); it++){
@@ -1163,7 +1191,7 @@ void SNPs::set_priors_cond(int which){
 	}
 }
 
-static const double lostOptimRidgePenalty = 0.0001;
+static const double lostOptimRidgePenalty = 0.001;
 
 double SNPs::llk(){
 	return llk(set<int>(), false);
@@ -1178,14 +1206,15 @@ double SNPs::llk(set<int> skip, bool penalize){
 	if (penalize && params->ridge_penalty > 0){
 		double p = params->ridge_penalty;
 		for (vector<double>::iterator it = lambdas.begin(); it != lambdas.end(); it++)			toreturn -= p * *it * *it;
-		for (vector<QuantParams>::iterator it = quantparams.begin(); it != quantparams.end(); it++)	toreturn -= p * it->lambda * it->lambda;
+		for (vector<QuantParams>::iterator it = quantparams.begin(); it != quantparams.end(); it++)	toreturn -= p * (it->lambda * it->lambda + it->b0 * it->b0 + it->b1 * it->b1);
+		//for (vector<QuantParams>::iterator it = quantparams.begin(); it != quantparams.end(); it++)	toreturn -= p * (it->lambda * it->lambda);
 		for (vector<double>::iterator it = seglambdas.begin(); it != seglambdas.end(); it++)	toreturn -= p * *it * *it;
 	} else {
 		// Because quantitative annotations are defined for every SNP, sometimes the optimization
 		// gets lost tracking along a ridge where you can increase lambda indefinitely at the expense
 		// of another parameter in the logistic equation. We can stop this by putting a very small
 		// ridge penalty that is negligible for reasonable values of lambda.
-		for (vector<QuantParams>::iterator it = quantparams.begin(); it != quantparams.end(); it++)	toreturn -= lostOptimRidgePenalty * it->lambda * it->lambda;
+		for (vector<QuantParams>::iterator it = quantparams.begin(); it != quantparams.end(); it++)	toreturn -= lostOptimRidgePenalty * (it->lambda * it->lambda + it->b0 * it->b0 + it->b1 * it->b1);
 	}
 	//data_llk = toreturn;
 	return toreturn;
@@ -1301,6 +1330,7 @@ void SNPs::GSL_optim(LLKFunction* pLLKFunc, set<int> toskip, bool penalize){
 		// Also include the segpi parameter
 		nparam += nsegannot + 1;
 	}
+	if (nparam < 1) return;
 	size_t iter = 0;
 	double size;
 	int status;
@@ -1336,16 +1366,21 @@ void SNPs::GSL_optim(LLKFunction* pLLKFunc, set<int> toskip, bool penalize){
 	gsl_vector_set_all(ss, 1.0);
 	s = gsl_multimin_fminimizer_alloc (T, nparam);
 
+	int numIterationsStuck = 0;
+	double lastSize = 0;
+	double lastLLK = 0;
+	vector<double> llks;
 	gsl_multimin_fminimizer_set (s, &lm, x, ss);
 	do
 	{
 		iter++;
 		status = gsl_multimin_fminimizer_iterate (s);
-
+		
 		if (status){
 			printf ("error: %s\n", gsl_strerror (status));
 			break;
 		}
+		
 		size = gsl_multimin_fminimizer_size(s);
 		status = gsl_multimin_test_size (size, 0.001);
 		//cout << iter << " "<< iter %10 << "\n";
@@ -1358,8 +1393,31 @@ void SNPs::GSL_optim(LLKFunction* pLLKFunc, set<int> toskip, bool penalize){
 		for (int i = 0; i < nannot; i++) cout << " " << lambdas[i];
 		for (int i = 0; i < quantparams.size(); i++) cout << " " << quantparams[i].lambda << "," << quantparams[i].b0 << "," << quantparams[i].b1;
 		cout << " "<< s->fval << " "<< size << "\n" << flush;
+
+		llks.push_back(s->fval);
+		// Stop optimisation if the rate of improvement of LLK is too low
+		if (iter > 200) {
+			double llkDiff = abs(llks[iter-1] - llks[iter-201]);
+			// Require that LLK improve at least 1 unit over the above number of iterations
+			if (llkDiff < 0.2) {
+				cout << "WARNING: optimization improvement is lower than 0.2 unit LLK over 200 iterations. Ending optimization.\n";
+				break;
+			}
+		}
+		if (s->fval == lastLLK && size == lastSize) {
+			numIterationsStuck++;
+			if (numIterationsStuck > (2*nparam + 10)) {
+				cout << "WARNING: optimization stuck at the same values for too many iterations (" << (2*nparam + 10) << ").\n";
+				cout << "WARNING: failed to converge\n";
+				break;
+			}
+		} else {
+			numIterationsStuck = 0;
+			lastSize = size;
+			lastLLK = s->fval;
+		}
 	}
-	while (status == GSL_CONTINUE && iter <5000);
+	while (status == GSL_CONTINUE && iter < 5000);
 	if (iter > 4999) {
 		cerr << "WARNING: failed to converge\n";
 		//exit(1);

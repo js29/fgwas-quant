@@ -77,8 +77,8 @@ int main(int argc, char *argv[]){
     		p.V.push_back( atof(strs[i].c_str()) );
     	}
     }
+    if (cmdline.HasSwitch("-xv")) { p.xv = true; }
     if (cmdline.HasSwitch("-p")) p.ridge_penalty = atof(cmdline.GetArgument("-p", 0).c_str());
-    if (cmdline.HasSwitch("-xv")) { p.xv = true; p.ridge_penalty = 0.2; } // Default ridge penalty if using XV
     if (cmdline.HasSwitch("-mse")) p.zformat = false;
     if (cmdline.HasSwitch("-print")) p.print = true;
     if (cmdline.HasSwitch("-onlyp")) p.onlyp = true;
@@ -232,11 +232,16 @@ int main(int argc, char *argv[]){
 		for (int i = 0; i < s.lambdas.size(); i++) outr << s.annotnames[i] << " " << s.lambdas[i] << "\n";
 		outr << "QuantParam lambda b0 b1\n";
 		for (int i = 0; i < s.quantparams.size(); i++) outr << s.quantannotnames[i] << " " << s.quantparams[i].lambda << " " << s.quantparams[i].b0 << " " << s.quantparams[i].b1 << endl;
+		
+		// print the PPAs
+		if (p.print) s.print(p.outstem+".bfs.gz", p.outstem+".segbfs.gz");
+		
 		if (p.xv) {
-			vector<double> xvlks = s.cross10(true);
+			ostringstream xvOutStr;
+			vector<double> xvlks = s.cross10(true, xvOutStr, p.outstem+".xv.bfs.gz", p.outstem+".xv.segbfs.gz");
 			
 			double meanxvlk = std::accumulate(xvlks.begin(), xvlks.end(), 0.0) / xvlks.size();
-			outr << "X-validation ln(lk) average: " << meanxvlk << endl;
+			outr << "\nX-validation ln(lk) average: " << meanxvlk << endl;
 			
 			// Get standard deviation and standard error
 			vector<double> diffs(xvlks.size());
@@ -246,9 +251,9 @@ int main(int argc, char *argv[]){
 			double stdev = sqrt(sq_sum / xvlks.size());
 			double stderr = stdev / sqrt(xvlks.size());
 			outr << "X-validation ln(lk) std err: " << stderr << endl;
+			
+			outr << xvOutStr.str();
 		}
-		// print the PPAs
-		if (p.print) s.print(p.outstem+".bfs.gz", p.outstem+".segbfs.gz");
 	}
 
 
