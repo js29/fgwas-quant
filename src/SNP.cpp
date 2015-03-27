@@ -178,7 +178,17 @@ double SNP::get_x(const vector<double>& lambda, const vector<QuantParams>& qpara
 		//if (qannot[i] > 0.0) toreturn += qparams[i].lambda / (1 + exp(-qparams[i].b1 * (qannot[i] - qparams[i].b0)));
 		
 		// Count the SNP annotation as long as it isn't "NA"
-		if (qannotDefined[i]) toreturn += qparams[i].lambda / (1 + exp(-qparams[i].b1 * (qannot[i] - qparams[i].b0)));
+//		if (qannotDefined[i]) toreturn += qparams[i].lambda / (1 + exp(-qparams[i].b1 * (qannot[i] - qparams[i].b0)));
+		
+		if (qannotDefined[i]) {
+			double exponent = -qparams[i].b1 * (qannot[i] - qparams[i].b0);
+			// Threshold -- if 1/(1+exp(-x)) is <0.01 or >0.99, return 0 or 1.
+			// This corresponds to exponent of +/- 4.59512
+			// This greatly reduces the number of calls to exp for most annotations
+			// without significantly changing the results.
+			if (exponent < -4.59512)	toreturn += qparams[i].lambda;
+			else if (exponent < 4.59512) toreturn += qparams[i].lambda / (1 + exp(exponent));
+		}
 	}
 	return toreturn;
 }
