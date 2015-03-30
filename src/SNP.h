@@ -54,8 +54,8 @@ public:
 	double calc_logBF_ind(double);
 	double approx_v(); // approximate V using f and N
 	double approx_v_cc(); //approximate V in case control setting
-	double get_x(vector<double>);
-	double get_x_cond(vector<double>, double);
+	double get_x(const vector<double>& lambda);
+	double get_x_cond(const vector<double>& lambda, double);
 	double sumlog(double, double);
 };
 

@@ -158,12 +158,13 @@ double SNP::approx_v_cc(){
 	return toreturn;
 }
 
-double SNP::get_x(vector<double> lambda){
-	if (lambda.size() != nannot){
-		cerr << "ERROR: SNP "<< id << ". Lambda has "<< lambda.size()<< " entries. nannot is " << nannot << "\n";
-		exit(1);
-	}
-	if (nannot == 0) return 0;
+double SNP::get_x(const vector<double>& lambda){
+	// JS: Since get_x is the most time-critical part of fgwas code, minimize
+	// the number of run-time checks here.
+	//if (lambda.size() != nannot){
+	//	cerr << "ERROR: SNP "<< id << ". Lambda has "<< lambda.size()<< " entries. nannot is " << nannot << "\n";
+	//	exit(1);
+	//}
 	double toreturn = 0;
 	for (int i = 0; i < nannot; i++) {
 		if (annot[i]) toreturn += lambda[i];
@@ -171,12 +172,13 @@ double SNP::get_x(vector<double> lambda){
 	return toreturn;
 }
 
-double SNP::get_x_cond(vector<double> lambda, double lambdac){
-	if (lambda.size() != nannot){
-		cerr << "ERROR: SNP "<< id << ". Lambda has "<< lambda.size()<< " entries. nannot is " << nannot << "\n";
-		exit(1);
-	}
-	if (nannot == 0) return 0;
+double SNP::get_x_cond(const vector<double>& lambda, double lambdac){
+	// JS: Since get_x is the most time-critical part of fgwas code, minimize
+	// the number of run-time checks here.
+	//if (lambda.size() != nannot){
+	//	cerr << "ERROR: SNP "<< id << ". Lambda has "<< lambda.size()<< " entries. nannot is " << nannot << "\n";
+	//	exit(1);
+	//}
 	double toreturn = 0;
 	for (int i = 0; i < nannot; i++) {
 		if (annot[i]) toreturn += lambda[i];

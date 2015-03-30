@@ -12,6 +12,8 @@
 #include "fgwas_params.h"
 using namespace std;
 
+typedef double LLKFunction(const gsl_vector *, void *);
+
 class SNPs{
 public:
 	SNPs();
@@ -28,6 +30,7 @@ public:
 	int nannot;
 	vector<vector<pair<int, int> > > dmodels; // hold the distance models
 	double condlambda; //for conditional analysis
+	
 	//segment annotations
 	double segpi;
 	int nsegannot;
@@ -47,7 +50,6 @@ public:
 	//10-fold cross-validation
 	double cross10(bool);
 	vector<set<int> > make_cross10();
-	double llk_xv(set<int>, bool);
 
 	double phi, resphi;
 	void load_snps(string, double, vector<string>);
@@ -70,14 +72,14 @@ public:
 	void set_post(int);
 	void set_post();
 	void GSL_optim();
-	void GSL_xv_optim(set<int>, bool);
-	void GSL_optim_fine();
 	void GSL_optim_ridge();
-	void GSL_optim_ridge_fine();
-	double llk(int);
+	void GSL_xv_optim(set<int> toskip, bool penalize);
+	void GSL_optim(LLKFunction* pLLKFunc, set<int> toskip, bool penalize);
+	
 	double llk();
-	double llk_ridge();
-
+	double llk(set<int> skip, bool penalize);
+	double llk(int which);
+	
 	double data_llk;
 	double sumlog(double, double);
 	void print_segprobs(string);
@@ -100,6 +102,33 @@ public:
 
 	void check_input();
 	void check_string2digit(string);
+	
+	//**************************** OPTIMIZATION ****************************//
+	// Vector that stores a cache of the sum of lambda values returned by SNP::get_x.
+	// Because combinations of annotations re-occur across SNPs, rather than recomputing 
+	// this sum for each SNP, we cache. Each SNP has an index into this cache that depends
+	// on the annotations of the particular SNP.
+	// This vector has length equal to the number of distinct annotation combinations
+	// across all SNPs.
+	vector<double> snpXcache;
+	// This vector has length equal to the number of distinct annotation combinations.
+	// It stores the unique combination of annotation 1's/0's.
+	vector<vector<bool> > cacheAnnots;
+	
+	// A vector of length (number of SNPs), with the index into the cache for the SNP.
+	// Indices in this correspond with indices in the vector "d" above.
+	vector<int> snpCacheIndex;
+
+	// A vector of the Bayes factor for each SNP. These are d[i].BF.
+	vector<double> BFs;
+	
+	// A vector of snppri + BF - computed in setpriors as an optimization.
+	vector<double> snppriBFsum;
+	
+	void init_priors_optimization();
+	void init_BF_optimization();
+	void precompute_prior_sums();
+	//**********************************************************************//
 };
 
 struct GSL_params{

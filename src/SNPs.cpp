@@ -6,6 +6,8 @@
  */
 
 #include "SNPs.h"
+#include <unordered_map>
+//#include <boost/unordered/unordered_map.hpp>
 using namespace std;
 
 SNPs::SNPs(){
@@ -51,6 +53,9 @@ SNPs::SNPs(Fgwas_params *p){
 	nsegannot = segannotnames.size();
 	for (int i = 0; i < nannot; i++)	lambdas.push_back(0);
 	for (int i = 0; i < nsegannot; i++) seglambdas.push_back(0);
+
+	init_priors_optimization();
+	init_BF_optimization();
 	set_priors();
 }
 
@@ -991,8 +996,62 @@ void SNPs::print_chrsegments(){
 
 }
 
-void SNPs::set_priors(){
+void SNPs::init_priors_optimization() {
+	// First go through all SNPs to find all the unique combinations of annotations.
+	cout << "Theoretically possible number of annotation combinations: 2^" << nannot;
+	if (nannot < 32) cout << " = " << pow(2, nannot);
+	cout << endl;
+	cout.flush();
+	
+	// Maps an annotation combination to a unique index in the range 0...#annot combinations
+	snpCacheIndex.resize(d.size(), -1);
+	std::unordered_map<int, int> annotCombinations(d.size());
+	int numAnnotCombinations = 0;
+	for (int snpIndex = 0; snpIndex < d.size(); snpIndex++) {
+		int annotCombIndex = 0;
+		for (int i = 0; i < nannot; i++) {
+			if (d[snpIndex].annot[i]) annotCombIndex |= 1 << i;
+		}
+		if (annotCombinations.find(annotCombIndex) == annotCombinations.end()) {
+			numAnnotCombinations += 1;
+			// This becomes the new index of this specific annotation combination
+			annotCombinations[annotCombIndex] = numAnnotCombinations;
+			cacheAnnots.push_back(d[snpIndex].annot);
+		}
+		// This SNP gets the index of this annotation combination. This will be an index
+		// indo the snpXcache vector.
+		snpCacheIndex[snpIndex] = annotCombinations[annotCombIndex]-1;
+	}
+	snpXcache.resize(numAnnotCombinations, 0);
+	cout << "Actual number of annotation combinations: " << numAnnotCombinations << "\n";
+	cout.flush();
+	if (snpXcache.size() != cacheAnnots.size()) {
+		cerr << "ERROR: cache vectors are not the same size: " << snpXcache.size() << "/" << cacheAnnots.size() << ".\n";
+		exit(1);
+	}
+}
 
+void SNPs::precompute_prior_sums() {
+	for (int cacheIndex = 0; cacheIndex < cacheAnnots.size(); cacheIndex++) {
+		double xSum = 0;
+		for (int i = 0; i < nannot; i++) {
+			if (cacheAnnots[cacheIndex][i])
+				xSum += lambdas[i];
+		}
+		snpXcache[cacheIndex] = xSum;
+	}
+}
+
+void SNPs::init_BF_optimization() {
+	BFs.reserve(d.size());
+	for (int i = 0; i < d.size(); i++) {
+		BFs.push_back(d[i].BF);
+	}
+	snppriBFsum.resize(d.size(), 0);
+}
+
+void SNPs::set_priors(){
+	precompute_prior_sums();
 	set_segpriors(); // a bit of computation for nothing if there's no segment annotations, spot for speed improvement if necessary
 	for (int i = 0; i < segments.size(); i++) set_priors(i);
 }
@@ -1018,25 +1077,26 @@ void SNPs::set_priors(int which){
 	//
 	// prior on SNP is exp(x_i)/ sum_j (exp(x_j))
 	//
-
 	pair<int, int> seg = segments[which];
 	int st = seg.first;
 	int sp = seg.second;
 
-	double sumxs = d[st].get_x(lambdas);
+	double sumxs = snpXcache[snpCacheIndex[st]];
 	snppri[st] = sumxs;
-	for (int i = st+1; i < sp ;i++) {
-		double tmpx = d[i].get_x(lambdas);
+	for (int i = st+1; i < sp; i++) {
+		//double tmpx = d[i].get_x(lambdas);
+		double tmpx = snpXcache[snpCacheIndex[i]];
 		snppri[i] = tmpx;
 		sumxs = sumlog(sumxs, tmpx);
 	}
-	for (int i = st; i <  sp ; i++) {
+	for (int i = st; i < sp; i++) {
 		//doing this in log space
-		snppri[i] = snppri[i] - sumxs;
-		if (!isfinite(snppri[i])){
-			cerr << "ERROR: prior for SNP "<< i << " is " << snppri[i] << "\n";
-			exit(1);
-		}
+		snppri[i] -= sumxs;
+		snppriBFsum[i] = snppri[i] + BFs[i];
+		 if (!isfinite(snppri[i])){
+			 cerr << "ERROR: prior for SNP "<< i << " is " << snppri[i] << "\n";
+			 exit(1);
+		 }
 	}
 }
 
@@ -1067,13 +1127,10 @@ void SNPs::set_priors_cond(int which){
 }
 
 double SNPs::llk(){
-	double toreturn = 0;
-	for (int i = 0; i < segments.size(); i++) toreturn += llk(i);
-	data_llk = toreturn;
-	return toreturn;
+	return llk(set<int>(), false);
 }
 
-double SNPs::llk_xv(set<int> skip, bool penalize){
+double SNPs::llk(set<int> skip, bool penalize){
 	double toreturn = 0;
 	for (int i = 0; i < segments.size(); i++) {
 		if (skip.find(i) != skip.end()) continue;
@@ -1087,47 +1144,34 @@ double SNPs::llk_xv(set<int> skip, bool penalize){
 	return toreturn;
 }
 
-double SNPs::llk_ridge(){
-	double toreturn = 0;
-	for (int i = 0; i < segments.size(); i++) toreturn += llk(i);
-	for (vector<double>::iterator it = lambdas.begin(); it != lambdas.end(); it++) toreturn -= params->ridge_penalty * *it * *it;
-	for (vector<double>::iterator it = seglambdas.begin(); it != seglambdas.end(); it++) toreturn -= params->ridge_penalty * *it * *it;
-	data_llk = toreturn;
-	return toreturn;
-}
-
-
 double SNPs::llk(int which){
-
 	double toreturn;
-
 	pair<int, int> seg = segments[which];
-
 	int st = seg.first;
 	int sp = seg.second;
-	double lsum = snppri[st]+ d[st].BF;
+	double lsum = snppri[st] + BFs[st];
 	st++;
 	for (int i = st; i < sp ; i++){
-		double tmp2add = snppri[i]+ d[i].BF;
+		//double tmp2add = snppri[i] + BFs[i];
 		//double tmp2add = log(snppri[i])+ d[i].BF;
-		if (!isfinite(tmp2add)){
-			cerr << "ERROR: likelihood of "<< tmp2add << " at SNP "<< d[i].id << " BF:"<< d[i].BF << " "<< snppri[i] << "\n";
-			exit(1);
-		}
-		lsum  = sumlog(lsum, tmp2add);
+		// JS: Remove run-time check for speed optimization
+		// if (!isfinite(tmp2add)){
+			// cerr << "ERROR: likelihood of "<< tmp2add << " at SNP "<< d[i].id << " BF:"<< d[i].BF << " "<< snppri[i] << "\n";
+			// exit(1);
+		// }
+		lsum  = sumlog(lsum, snppriBFsum[i]);
 		//cout << tmp2add << " "<< snppri[i]<< " "<< d[i].BF << " "<< lsum << "\n";
 	}
 	if (params->finemap) return lsum;
 	toreturn = log(segpriors[which]) + lsum;
-	//cout << toreturn << "\n";
 	toreturn = sumlog(toreturn, log(1-segpriors[which]));
 
 	return toreturn;
 }
 
 double SNPs::sumlog(double logx, double logy){
-        if (logx > logy) return logx + log(1 + exp(logy-logx));
-        else return logy + log(1 + exp(logx-logy));
+	if (logx > logy) return logx + log(1 + exp(logy-logx));
+	else return logy + log(1 + exp(logx-logy));
 }
 
 void SNPs::set_post(){
@@ -1189,345 +1233,134 @@ void SNPs::optimize_l0(){
 
 
 void SNPs::GSL_optim(){
-	if (params->finemap){
-		GSL_optim_fine();
-		return;
-	}
-	int nparam = nannot+nsegannot+1;
-	size_t iter = 0;
-	double size;
-    int status;
-    const gsl_multimin_fminimizer_type *T =
-    		gsl_multimin_fminimizer_nmsimplex2;
-    gsl_multimin_fminimizer *s;
-    gsl_vector *x;
-    gsl_vector *ss;
-    gsl_multimin_function lm;
-    lm.n = nparam;
-    lm.f = &GSL_llk;
-    struct GSL_params p;
-    p.d = this;
-    lm.params = &p;
-    //cout << llk()<< "\n"; cout.flush();
-    //
-    // initialize parameters
-    //
-    x = gsl_vector_alloc (nparam);
-    gsl_vector_set(x, 0, log(segpi) - log(1-segpi));
-    for (int i = 0; i < nparam-1; i++)   gsl_vector_set(x, i+1, 1);
-
-    // set initial step sizes to 1
-    ss = gsl_vector_alloc(nparam);
-    gsl_vector_set_all(ss, 1.0);
-    s = gsl_multimin_fminimizer_alloc (T, nparam);
-
-    gsl_multimin_fminimizer_set (s, &lm, x, ss);
-    do
-     {
-             iter++;
-             status = gsl_multimin_fminimizer_iterate (s);
-
-             if (status){
-                     printf ("error: %s\n", gsl_strerror (status));
-                     break;
-             }
-             size = gsl_multimin_fminimizer_size(s);
-             status = gsl_multimin_test_size (size, 0.001);
-             //cout << iter << " "<< iter %10 << "\n";
-             if (iter % 20 < 1 || iter < 2){
-            	 cout <<"iteration: "<< iter << " "<< segpi;
-            	 for (int i = 0; i < nsegannot; i++) cout <<  " "<< seglambdas[i];
-            	 for (int i = 0; i < nannot; i++) cout << " "<< lambdas[i];
-            	 cout << " "<< s->fval << " "<< size <<  "\n";
-             }
-
-     }
-     while (status == GSL_CONTINUE && iter <5000);
-     if (iter > 4999) {
-             cerr << "WARNING: failed to converge\n";
-             //exit(1);
-     }
-     segpi = 1.0 /  (1.0 + exp (- gsl_vector_get(s->x, 0)));
-     for (int i = 0; i < nsegannot; i++) seglambdas[i] = gsl_vector_get(s->x, i+1);
-     for (int i = 0; i < nannot; i++) lambdas[i] = gsl_vector_get(s->x, i+nsegannot+1);
-
-
-     gsl_multimin_fminimizer_free (s);
-     gsl_vector_free (x);
-     gsl_vector_free(ss);
-}
-
-
-void SNPs::GSL_xv_optim(set<int> toskip, bool penalize){
-	int nparam = nannot+nsegannot+1;
-	size_t iter = 0;
-	double size;
-    int status;
-    const gsl_multimin_fminimizer_type *T =
-    		gsl_multimin_fminimizer_nmsimplex2;
-    gsl_multimin_fminimizer *s;
-    gsl_vector *x;
-    gsl_vector *ss;
-    gsl_multimin_function lm;
-    lm.n = nparam;
-    lm.f = &GSL_llk_xv;
-    struct GSL_params p;
-    p.d = this;
-    p.toskip = toskip;
-    p.penalize = penalize;
-    lm.params = &p;
-    //cout << llk()<< "\n"; cout.flush();
-    //
-    // initialize parameters
-    //
-    x = gsl_vector_alloc (nparam);
-    gsl_vector_set(x, 0, log(segpi) - log(1-segpi));
-    for (int i = 0; i < nparam-1; i++)   gsl_vector_set(x, i+1, 1);
-
-    // set initial step sizes to 1
-    ss = gsl_vector_alloc(nparam);
-    gsl_vector_set_all(ss, 1.0);
-    s = gsl_multimin_fminimizer_alloc (T, nparam);
-
-    gsl_multimin_fminimizer_set (s, &lm, x, ss);
-    do
-     {
-             iter++;
-             status = gsl_multimin_fminimizer_iterate (s);
-
-             if (status){
-                     printf ("error: %s\n", gsl_strerror (status));
-                     break;
-             }
-             size = gsl_multimin_fminimizer_size(s);
-             status = gsl_multimin_test_size (size, 0.001);
-             //cout << iter << " "<< iter %10 << "\n";
-             if (iter % 20 < 1 || iter < 2){
-            	 cout <<"iteration: "<< iter << " "<< segpi;
-            	 for (int i = 0; i < nsegannot; i++) cout <<  " "<< seglambdas[i];
-            	 for (int i = 0; i < nannot; i++) cout << " "<< lambdas[i];
-            	 cout << " "<< s->fval << " "<< size <<  "\n";
-             }
-
-     }
-     while (status == GSL_CONTINUE && iter <5000);
-     if (iter > 4999) {
-             cerr << "WARNING: failed to converge\n";
-             //exit(1);
-     }
-     segpi = 1.0 /  (1.0 + exp (- gsl_vector_get(s->x, 0)));
-     for (int i = 0; i < nsegannot; i++) seglambdas[i] = gsl_vector_get(s->x, i+1);
-     for (int i = 0; i < nannot; i++) lambdas[i] = gsl_vector_get(s->x, i+nsegannot+1);
-
-
-     gsl_multimin_fminimizer_free (s);
-     gsl_vector_free (x);
-     gsl_vector_free(ss);
-}
-
-
-
-
-void SNPs::GSL_optim_fine(){
-	int nparam = nannot;
-	if (nparam < 1) return;
-	size_t iter = 0;
-	double size;
-    int status;
-    const gsl_multimin_fminimizer_type *T =
-    		gsl_multimin_fminimizer_nmsimplex2;
-    gsl_multimin_fminimizer *s;
-    gsl_vector *x;
-    gsl_vector *ss;
-    gsl_multimin_function lm;
-    lm.n = nparam;
-    lm.f = &GSL_llk_fine;
-    struct GSL_params p;
-    p.d = this;
-    lm.params = &p;
-    //cout << llk()<< "\n"; cout.flush();
-    //
-    // initialize parameters
-    //
-
-    x = gsl_vector_alloc (nparam);
-    for (int i = 0; i < nannot; i++)   gsl_vector_set(x, i, 1);
-
-    // set initial step sizes to 1
-    ss = gsl_vector_alloc(nparam);
-    gsl_vector_set_all(ss, 1.0);
-
-    s = gsl_multimin_fminimizer_alloc (T, nparam);
-    //cout << "here o1\n"; cout.flush();
-    gsl_multimin_fminimizer_set (s, &lm, x, ss);
-    //cout << "here2\n"; cout.flush();
-    do
-     {
-             iter++;
-             status = gsl_multimin_fminimizer_iterate (s);
-
-             if (status){
-                     printf ("error: %s\n", gsl_strerror (status));
-                     break;
-             }
-             size = gsl_multimin_fminimizer_size(s);
-             status = gsl_multimin_test_size (size, 0.001);
-             //cout << iter << " "<< iter %10 << "\n";
-             if (iter % 20 < 1 || iter < 2){
-            	 cout <<"iteration: "<< iter;
-            	 for (int i = 0; i < nannot; i++) cout << " "<< lambdas[i];
-            	 cout << " "<< s->fval << " "<< size <<  "\n";
-             }
-
-     }
-     while (status == GSL_CONTINUE && iter <5000);
-     if (iter > 4999) {
-             cerr << "WARNING: failed to converge\n";
-             //exit(1);
-     }
-     for (int i = 0; i < nannot; i++) lambdas[i] = gsl_vector_get(s->x, i);
-
-
-     gsl_multimin_fminimizer_free (s);
-     gsl_vector_free (x);
-     gsl_vector_free(ss);
-}
-
-
-
-void SNPs::GSL_optim_ridge_fine(){
-	int nparam = nannot;
-	if (nparam < 1) return;
-	size_t iter = 0;
-	double size;
-    int status;
-    const gsl_multimin_fminimizer_type *T =
-    		gsl_multimin_fminimizer_nmsimplex2;
-    gsl_multimin_fminimizer *s;
-    gsl_vector *x;
-    gsl_vector *ss;
-    gsl_multimin_function lm;
-    lm.n = nparam;
-    lm.f = &GSL_llk_ridge_fine;
-    struct GSL_params p;
-    p.d = this;
-    lm.params = &p;
-    //cout << llk()<< "\n"; cout.flush();
-    //
-    // initialize parameters
-    //
-
-    x = gsl_vector_alloc (nparam);
-    for (int i = 0; i < nannot; i++)   gsl_vector_set(x, i, 1);
-
-    // set initial step sizes to 1
-    ss = gsl_vector_alloc(nparam);
-    gsl_vector_set_all(ss, 1.0);
-
-    s = gsl_multimin_fminimizer_alloc (T, nparam);
-    //cout << "here o1\n"; cout.flush();
-    gsl_multimin_fminimizer_set (s, &lm, x, ss);
-    //cout << "here2\n"; cout.flush();
-    do
-     {
-             iter++;
-             status = gsl_multimin_fminimizer_iterate (s);
-
-             if (status){
-                     printf ("error: %s\n", gsl_strerror (status));
-                     break;
-             }
-             size = gsl_multimin_fminimizer_size(s);
-             status = gsl_multimin_test_size (size, 0.001);
-             //cout << iter << " "<< iter %10 << "\n";
-             if (iter % 20 < 1 || iter < 2){
-            	 cout <<"iteration: "<< iter;
-            	 for (int i = 0; i < nannot; i++) cout << " "<< lambdas[i];
-            	 cout << " "<< s->fval << " "<< size <<  "\n";
-             }
-
-     }
-     while (status == GSL_CONTINUE && iter <5000);
-     if (iter > 4999) {
-             cerr << "WARNING: failed to converge\n";
-             //exit(1);
-     }
-     for (int i = 0; i < nannot; i++) lambdas[i] = gsl_vector_get(s->x, i);
-
-
-     gsl_multimin_fminimizer_free (s);
-     gsl_vector_free (x);
-     gsl_vector_free(ss);
+	GSL_optim(&GSL_llk, set<int>(), false);
 }
 
 void SNPs::GSL_optim_ridge(){
-	if (params->finemap){
-		GSL_optim_ridge_fine();
-		return;
+	GSL_optim(&GSL_llk, set<int>(), true);
+}
+
+void SNPs::GSL_xv_optim(set<int> toskip, bool penalize){
+	GSL_optim(&GSL_llk, toskip, penalize);
+}
+
+void SNPs::GSL_optim(LLKFunction* pLLKFunc, set<int> toskip, bool penalize){
+	int nparam = nannot;
+	if (nsegannot > 0) {
+		if (params->finemap) {
+			cerr << "ERROR: There should be no region-level annotations in fine-mapping mode\n";
+			exit(1);
+		}
+		// Also include the segpi parameter
+		nparam += nsegannot + 1;
 	}
-	int nparam = nannot+nsegannot+1;
+	if (nparam < 1) return;
 	size_t iter = 0;
 	double size;
-    int status;
-    const gsl_multimin_fminimizer_type *T =
-    		gsl_multimin_fminimizer_nmsimplex2;
-    gsl_multimin_fminimizer *s;
-    gsl_vector *x;
-    gsl_vector *ss;
-    gsl_multimin_function lm;
-    lm.n = nparam;
-    lm.f = &GSL_llk_ridge;
-    struct GSL_params p;
-    p.d = this;
-    lm.params = &p;
-    //cout << llk()<< "\n"; cout.flush();
-    //
-    // initialize parameters
-    //
-    x = gsl_vector_alloc (nparam);
-    gsl_vector_set(x, 0, log(segpi) - log(1-segpi));
-    for (int i = 0; i < nparam-1; i++)   gsl_vector_set(x, i+1, 1);
+	int status;
+	const gsl_multimin_fminimizer_type *T =
+			gsl_multimin_fminimizer_nmsimplex2;
+	gsl_multimin_fminimizer *s;
+	gsl_vector *x;
+	gsl_vector *ss;
+	gsl_multimin_function lm;
+	lm.n = nparam;
+	lm.f = pLLKFunc;
+	struct GSL_params p;
+	p.d = this;
+	p.toskip = toskip;
+	p.penalize = penalize;
+	lm.params = &p;
+	//cout << llk()<< "\n"; cout.flush();
+	//
+	// initialize parameters
+	//
+	x = gsl_vector_alloc(nparam);
+	int curParam = 0;
+	if (nsegannot > 0) {
+		gsl_vector_set(x, curParam, log(segpi) - log(1-segpi));
+		curParam++;
+	}
+	for (; curParam < nparam; curParam++) {
+		gsl_vector_set(x, curParam, 1);
+	}
 
-    // set initial step sizes to 1
-    ss = gsl_vector_alloc(nparam);
-    gsl_vector_set_all(ss, 1.0);
-    s = gsl_multimin_fminimizer_alloc (T, nparam);
+	// set initial step sizes to 1
+	ss = gsl_vector_alloc(nparam);
+	gsl_vector_set_all(ss, 1.0);
+	s = gsl_multimin_fminimizer_alloc (T, nparam);
 
-    gsl_multimin_fminimizer_set (s, &lm, x, ss);
-    do
-     {
-             iter++;
-             status = gsl_multimin_fminimizer_iterate (s);
+	int numIterationsStuck = 0;
+	double lastSize = 0;
+	double lastLLK = 0;
+	vector<double> llks;
+	gsl_multimin_fminimizer_set (s, &lm, x, ss);
+	do
+	{
+		iter++;
+		status = gsl_multimin_fminimizer_iterate (s);
+		
+		if (status){
+			printf ("error: %s\n", gsl_strerror (status));
+			break;
+		}
+		
+		size = gsl_multimin_fminimizer_size(s);
+		status = gsl_multimin_test_size (size, 0.001);
+		//cout << iter << " "<< iter %10 << "\n";
+		//if (iter % 20 < 1 || iter < 20){
+		cout << "iteration: " << iter;
+		if (nsegannot > 0) {
+			cout << " " << segpi;
+			for (int i = 0; i < nsegannot; i++) cout <<  " " << seglambdas[i];
+		}
+		for (int i = 0; i < nannot; i++) cout << " " << lambdas[i];
+		cout << " "<< s->fval << " "<< size << "\n" << flush;
 
-             if (status){
-                     printf ("error: %s\n", gsl_strerror (status));
-                     break;
-             }
-             size = gsl_multimin_fminimizer_size(s);
-             status = gsl_multimin_test_size (size, 0.001);
-             //cout << iter << " "<< iter %10 << "\n";
-             if (iter % 20 < 1 || iter < 2){
-            	 cout <<"iteration: "<< iter << " "<< segpi;
-            	 for (int i = 0; i < nsegannot; i++) cout <<  " "<< seglambdas[i];
-            	 for (int i = 0; i < nannot; i++) cout << " "<< lambdas[i];
-            	 cout << " "<< s->fval << " "<< size <<  "\n";
-             }
-
-     }
-     while (status == GSL_CONTINUE && iter <5000);
-     if (iter > 4999) {
-             cerr << "WARNING: failed to converge\n";
-             //exit(1);
-     }
-     segpi = 1.0 /  (1.0 + exp (- gsl_vector_get(s->x, 0)));
-     for (int i = 0; i < nsegannot; i++) seglambdas[i] = gsl_vector_get(s->x, i+1);
-     for (int i = 0; i < nannot; i++) lambdas[i] = gsl_vector_get(s->x, i+nsegannot+1);
-
-
-     gsl_multimin_fminimizer_free (s);
-     gsl_vector_free (x);
-     gsl_vector_free(ss);
+		llks.push_back(s->fval);
+		// Stop optimisation if the rate of improvement of LLK is too low
+		if (iter > 200) {
+			double llkDiff = abs(llks[iter-1] - llks[iter-201]);
+			// Require that LLK improve at least 1 unit over the above number of iterations
+			if (llkDiff < 0.2) {
+				cout << "WARNING: optimization improvement is lower than 0.2 unit LLK over 200 iterations. Ending optimization.\n";
+				break;
+			}
+		}
+		if (s->fval == lastLLK && size == lastSize) {
+			numIterationsStuck++;
+			if (numIterationsStuck > (2*nparam + 10)) {
+				cout << "WARNING: optimization stuck at the same values for too many iterations (" << (2*nparam + 10) << ").\n";
+				cout << "WARNING: failed to converge\n";
+				break;
+			}
+		} else {
+			numIterationsStuck = 0;
+			lastSize = size;
+			lastLLK = s->fval;
+		}
+	}
+	while (status == GSL_CONTINUE && iter < 5000);
+	if (iter > 4999) {
+		cerr << "WARNING: failed to converge\n";
+		//exit(1);
+	}
+	curParam = 0;
+	if (nsegannot > 0) {
+		segpi = 1.0 /  (1.0 + exp (- gsl_vector_get(s->x, curParam)));
+		curParam++;
+	}
+	for (int i = 0; i < nsegannot; i++) seglambdas[i] = gsl_vector_get(s->x, curParam+i);
+	curParam += nsegannot;
+	
+	for (int i = 0; i < nannot; i++) lambdas[i] = gsl_vector_get(s->x, curParam+i);
+	curParam += nannot;
+ 
+	gsl_multimin_fminimizer_free(s);
+	gsl_vector_free(x);
+	gsl_vector_free(ss);
 }
+
 
 int SNPs::golden_section_segpi(double min, double guess, double max, double tau){
         double x;
@@ -1777,83 +1610,24 @@ int SNPs::golden_section_l0(double min, double guess, double max, double tau){
 }
 
 
-double GSL_llk(const gsl_vector *x, void *params ){
-	//first set times
-	int na = ((struct GSL_params *) params)->d->nannot;
-	int ns = ((struct GSL_params *) params)->d->nsegannot;
-	((struct GSL_params *) params)->d->segpi = 1.0 /  (1.0 + exp (- gsl_vector_get(x, 0)));
-
+double GSL_llk(const gsl_vector *x, void *params){
+	struct GSL_params *gslparams = (struct GSL_params *) params;
+	SNPs* d = gslparams->d;
+	int na = d->nannot;
+	int ns = d->nsegannot;
+	int curParam = 0;
+	if (ns > 0) {
+		d->segpi = 1.0 / (1.0 + exp (- gsl_vector_get(x, 0)));
+		curParam += 1;
+	}
 	for (int i = 0; i < ns; i++){
-		((struct GSL_params *) params)->d->seglambdas[i] = gsl_vector_get(x, i+1);
+		d->seglambdas[i] = gsl_vector_get(x, curParam+i);
 	}
-
+	curParam += ns;
 	for (int i = 0; i < na; i++){
-		((struct GSL_params *) params)->d->lambdas[i] = gsl_vector_get(x, i+ns+1);
+		d->lambdas[i] = gsl_vector_get(x, curParam+i);
 	}
-	((struct GSL_params *) params)->d->set_priors();
-	return -((struct GSL_params *) params)->d->llk();
+	d->set_priors();
+	return -d->llk(gslparams->toskip, gslparams->penalize);
 }
-
-double GSL_llk_xv(const gsl_vector *x, void *params ){
-	//first set times
-	int na = ((struct GSL_params *) params)->d->nannot;
-	int ns = ((struct GSL_params *) params)->d->nsegannot;
-	set<int> toskip = ((struct GSL_params *) params)->toskip;
-	bool penalize  = ((struct GSL_params *) params)->penalize;
-	((struct GSL_params *) params)->d->segpi = 1.0 /  (1.0 + exp (- gsl_vector_get(x, 0)));
-
-	for (int i = 0; i < ns; i++){
-		((struct GSL_params *) params)->d->seglambdas[i] = gsl_vector_get(x, i+1);
-	}
-
-	for (int i = 0; i < na; i++){
-		((struct GSL_params *) params)->d->lambdas[i] = gsl_vector_get(x, i+ns+1);
-	}
-	((struct GSL_params *) params)->d->set_priors();
-	return -((struct GSL_params *) params)->d->llk_xv(toskip, penalize);
-}
-
-
-double GSL_llk_ridge(const gsl_vector *x, void *params ){
-	//first set times
-	int na = ((struct GSL_params *) params)->d->nannot;
-	int ns = ((struct GSL_params *) params)->d->nsegannot;
-	((struct GSL_params *) params)->d->segpi = 1.0 /  (1.0 + exp (- gsl_vector_get(x, 0)));
-
-	for (int i = 0; i < ns; i++){
-		((struct GSL_params *) params)->d->seglambdas[i] = gsl_vector_get(x, i+1);
-	}
-
-	for (int i = 0; i < na; i++){
-		((struct GSL_params *) params)->d->lambdas[i] = gsl_vector_get(x, i+ns+1);
-	}
-	((struct GSL_params *) params)->d->set_priors();
-	return -((struct GSL_params *) params)->d->llk_ridge();
-}
-
-
-double GSL_llk_fine(const gsl_vector *x, void *params ){
-	//first set times
-	int na = ((struct GSL_params *) params)->d->nannot;
-
-	for (int i = 0; i < na; i++){
-		((struct GSL_params *) params)->d->lambdas[i] = gsl_vector_get(x, i);
-	}
-	((struct GSL_params *) params)->d->set_priors();
-	return -((struct GSL_params *) params)->d->llk();
-}
-
-
-double GSL_llk_ridge_fine(const gsl_vector *x, void *params ){
-	//first set times
-	int na = ((struct GSL_params *) params)->d->nannot;
-
-	for (int i = 0; i < na; i++){
-		((struct GSL_params *) params)->d->lambdas[i] = gsl_vector_get(x, i);
-	}
-	((struct GSL_params *) params)->d->set_priors();
-	return -((struct GSL_params *) params)->d->llk_ridge();
-}
-
-
 
