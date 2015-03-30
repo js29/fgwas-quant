@@ -45,10 +45,8 @@ SNPs::SNPs(Fgwas_params *p){
 	init_segpriors();
     phi = (1+sqrt(5))/2;
     resphi = 2-phi;
-	for (int i = 0; i < d.size(); i++){
-		snppri.push_back(1.0);
-		snppost.push_back(0.0);
-	}
+    snppri.resize(d.size(), 1.0);
+    snppost.resize(d.size(), 0.0);
 	nannot = annotnames.size();
 	nsegannot = segannotnames.size();
 	for (int i = 0; i < nannot; i++)	lambdas.push_back(0);
@@ -322,6 +320,7 @@ void SNPs::load_snps_z(string infile, vector<double> prior, vector<string> annot
 	}
 	else if (params->cond) condindex = header_index[params->testcond_annot];
 	string oldchr = "NA";
+	d.reserve(3000000);
     while(getline(in, st)){
     	buf.clear();
     	stringstream ss(st);
@@ -359,7 +358,10 @@ void SNPs::load_snps_z(string infile, vector<double> prior, vector<string> annot
     			dists.push_back( atoi(line[*it].c_str()));
     		}
 
-    		SNP s(rs, chr , pos, N, alfreq, z, prior, an, dists, dmodels);
+    		//SNP s(rs, chr , pos, N, alfreq, z, prior, an, dists, dmodels);
+			d.push_back(SNP());
+			SNP& s = d[d.size()-1];
+			s.initSNP(rs, chr , pos, N, alfreq, z, prior, an, dists, dmodels);
     		if (params->finemap){
     			check_string2digit(line[segnumberindex]);
     			int snumber = atoi(line[segnumberindex].c_str());
@@ -385,7 +387,7 @@ void SNPs::load_snps_z(string infile, vector<double> prior, vector<string> annot
     				exit(1);
     			}
     		}
-    		d.push_back(s);
+    		//d.push_back(s);
     	}
 
     	//case-control study
@@ -410,7 +412,10 @@ void SNPs::load_snps_z(string infile, vector<double> prior, vector<string> annot
       			dists.push_back( atoi(line[*it].c_str()));
         	}
 
-      		SNP s(rs, chr , pos, Ncase, Ncontrol, alfreq, z, prior, an, dists, dmodels);
+      		//SNP s(rs, chr , pos, Ncase, Ncontrol, alfreq, z, prior, an, dists, dmodels);
+			d.push_back(SNP());
+			SNP& s = d[d.size()-1];
+			s.initSNP(rs, chr, pos, Ncase, Ncontrol, alfreq, z, prior, an, dists, dmodels);
     		if (params->finemap){
     			check_string2digit(line[segnumberindex]);
     			int snumber = atoi(line[segnumberindex].c_str());
@@ -1307,16 +1312,15 @@ void SNPs::GSL_optim(LLKFunction* pLLKFunc, set<int> toskip, bool penalize){
 		
 		size = gsl_multimin_fminimizer_size(s);
 		status = gsl_multimin_test_size (size, 0.001);
-		//cout << iter << " "<< iter %10 << "\n";
-		//if (iter % 20 < 1 || iter < 20){
-		cout << "iteration: " << iter;
-		if (nsegannot > 0) {
-			cout << " " << segpi;
-			for (int i = 0; i < nsegannot; i++) cout <<  " " << seglambdas[i];
+		if (iter % 20 < 1 || iter < 20){
+			cout << "iteration: " << iter;
+			if (nsegannot > 0) {
+				cout << " " << segpi;
+				for (int i = 0; i < nsegannot; i++) cout <<  " " << seglambdas[i];
+			}
+			for (int i = 0; i < nannot; i++) cout << " " << lambdas[i];
+			cout << " "<< s->fval << " "<< size << "\n" << flush;
 		}
-		for (int i = 0; i < nannot; i++) cout << " " << lambdas[i];
-		cout << " "<< s->fval << " "<< size << "\n" << flush;
-
 		llks.push_back(s->fval);
 		// Stop optimisation if the rate of improvement of LLK is too low
 		if (iter > 200) {

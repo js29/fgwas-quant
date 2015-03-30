@@ -29,8 +29,8 @@ using namespace std;
 class SNP{
 public:
 	SNP();
-	SNP(string, string, int, int, double, double, vector<double>, vector<bool>, vector<int>, vector<vector<pair<int, int> > >);
-	SNP(string, string, int, int, int, double, double, vector<double>, vector<bool>, vector<int>, vector<vector<pair<int, int> > >);
+	void initSNP(string, string, int, int, double, double, const vector<double>&, const vector<bool>&, const vector<int>&, const vector<vector<pair<int, int> > >&);
+	void initSNP(string, string, int, int, int, double, double, const vector<double>&, const vector<bool>&, const vector<int>&, const vector<vector<pair<int, int> > >&);
 	//SNP(string, string, int, double, double, double, double, vector<bool>);
 	string id;
 	string chr;
@@ -48,7 +48,7 @@ public:
 	vector<float> annot_weight;
 	vector<int> dists;
 	bool condannot;
-	void append_distannots(vector<vector<pair<int, int> > >); // convert distances to annotations according to distance models
+	void append_distannots(const vector<vector<pair<int, int> > >&); // convert distances to annotations according to distance models
 	int nannot;
 	double calc_logBF();
 	double calc_logBF_ind(double);
